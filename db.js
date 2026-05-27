@@ -3,7 +3,7 @@ const { Pool } = require('pg');
 
 // 1. Connect to Supabase Cloud Database (Replaced local credentials)
 const pool = new Pool({
-  connectionString: "postgresql://postgres:Arun@123@Arun@123@db.rtmdfrcajrphoryqkydy.supabase.co:5432/postgres",
+  connectionString: "postgresql://postgres.rtmdfrcajrphoryqkydy:Arun@123@Arun@123@aws-1-ap-northeast-2.pooler.supabase.com:6543/postgres",
   ssl: {
     rejectUnauthorized: false // Required for cloud databases
   }
