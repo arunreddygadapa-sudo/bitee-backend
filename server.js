@@ -34,6 +34,31 @@ app.post('/api/login', async (req, res) => {
 });
 
 // Partner Auth
+// 🚀 NEW: The Missing Restaurant Registration Route!
+app.post('/api/partner/register', async (req, res) => {
+  try {
+    const { restaurantName, email, password, restaurantAddress, timings } = req.body;
+    
+    // Secure the password before saving to the database
+    const passwordHash = await bcrypt.hash(password, 10);
+
+    // Insert into Restaurants table. 
+    // is_approved = FALSE (Admin must approve), is_online = FALSE (Cannot receive orders yet)
+    const insertQuery = `
+      INSERT INTO Restaurants (restaurant_name, email, password_hash, restaurant_address, timings, is_approved, is_online) 
+      VALUES ($1, $2, $3, $4, $5, FALSE, FALSE) 
+      RETURNING restaurant_id, restaurant_name, email;
+    `;
+    
+    const newRestaurant = await pool.query(insertQuery, [restaurantName, email, passwordHash, restaurantAddress, timings]);
+    res.status(201).json({ message: "Application submitted successfully!", restaurant: newRestaurant.rows[0] });
+    
+  } catch (error) {
+    console.error("🔥 DB INSERT ERROR:", error);
+    res.status(500).json({ error: "Server error. Ensure your Restaurants table has these columns." });
+  }
+});
+
 app.post('/api/partner/login', async (req, res) => {
   try {
     const { email, password } = req.body;
