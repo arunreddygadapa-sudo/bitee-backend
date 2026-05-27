@@ -34,28 +34,41 @@ app.post('/api/login', async (req, res) => {
 });
 
 // Partner Auth
-// 🚀 NEW: The Missing Restaurant Registration Route!
+// 🚀 UPGRADED: Now grabs ALL fields from the app and sends them to the database!
 app.post('/api/partner/register', async (req, res) => {
   try {
-    const { restaurantName, email, password, restaurantAddress, timings } = req.body;
+    // 1. Extract every piece of data the frontend app sent
+    const { 
+      restaurantName, ownerName, restaurantPhone, ownerPhone, email, password, 
+      restaurantAddress, ownerAddress, timings, aadhaarNumber, panNumber, 
+      bankAccountNo, bankIfsc, bankAccountName 
+    } = req.body;
     
-    // Secure the password before saving to the database
+    // 2. Hash the password
     const passwordHash = await bcrypt.hash(password, 10);
 
-    // Insert into Restaurants table. 
-    // is_approved = FALSE (Admin must approve), is_online = FALSE (Cannot receive orders yet)
+    // 3. Insert ALL data into the database
     const insertQuery = `
-      INSERT INTO Restaurants (restaurant_name, email, password_hash, restaurant_address, timings, is_approved, is_online) 
-      VALUES ($1, $2, $3, $4, $5, FALSE, FALSE) 
+      INSERT INTO Restaurants (
+        restaurant_name, owner_name, restaurant_phone, owner_phone, email, password_hash, 
+        restaurant_address, owner_address, timings, aadhaar_number, pan_number, 
+        bank_account_no, bank_ifsc, bank_account_name, is_approved, is_online
+      ) 
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, FALSE, FALSE) 
       RETURNING restaurant_id, restaurant_name, email;
     `;
     
-    const newRestaurant = await pool.query(insertQuery, [restaurantName, email, passwordHash, restaurantAddress, timings]);
+    const newRestaurant = await pool.query(insertQuery, [
+      restaurantName, ownerName, restaurantPhone, ownerPhone, email, passwordHash, 
+      restaurantAddress, ownerAddress, timings, aadhaarNumber, panNumber, 
+      bankAccountNo, bankIfsc, bankAccountName
+    ]);
+    
     res.status(201).json({ message: "Application submitted successfully!", restaurant: newRestaurant.rows[0] });
     
   } catch (error) {
-    console.error("🔥 DB INSERT ERROR:", error);
-    res.status(500).json({ error: "Server error. Ensure your Restaurants table has these columns." });
+    console.error("🔥 DB INSERT ERROR:", error.message);
+    res.status(500).json({ error: `Database error: ${error.message}` });
   }
 });
 
@@ -95,7 +108,7 @@ app.post('/api/rider/login', async (req, res) => {
 });
 
 // ==========================================
-// 2. MENU ENGINE (RESTORED!)
+// 2. MENU ENGINE 
 // ==========================================
 app.post('/api/menu', async (req, res) => {
   try {
@@ -142,7 +155,6 @@ app.get('/api/restaurant/orders/:restaurantId/live', async (req, res) => {
   } catch (error) { res.status(500).json({ error: "Error fetching live orders." }); }
 });
 
-// RESTORED HISTORY ENDPOINT
 app.get('/api/restaurant/orders/:restaurantId/history', async (req, res) => {
   try {
     const ordersQuery = await pool.query("SELECT * FROM Orders WHERE status IN ('READY FOR PICKUP', 'DELIVERED', 'REJECTED') AND restaurant_id = $1 ORDER BY created_at DESC", [req.params.restaurantId]);
@@ -157,7 +169,6 @@ app.put('/api/orders/:id/status', async (req, res) => {
   } catch (error) { res.status(500).json({ error: "Error updating status." }); }
 });
 
-// RESTORED REJECT ENDPOINT
 app.put('/api/orders/:id/reject', async (req, res) => {
   try {
     const { reason } = req.body;
@@ -167,13 +178,12 @@ app.put('/api/orders/:id/reject', async (req, res) => {
 });
 
 // ==========================================
-// 4. CUSTOMER CHECKOUT (OTPs)
+// 4. CUSTOMER CHECKOUT 
 // ==========================================
 app.post('/api/orders', async (req, res) => {
   try {
     const { customerName, totalAmount, paymentMethod, items, restaurantId } = req.body;
     const itemsJson = JSON.stringify(items);
-
     const restOtp = Math.floor(1000 + Math.random() * 9000).toString();
     const custOtp = Math.floor(1000 + Math.random() * 9000).toString();
     const mockDeliveryDistance = (Math.random() * 8 + 2).toFixed(1);
@@ -205,7 +215,7 @@ app.get('/api/orders/:id/track', async (req, res) => {
 });
 
 // ==========================================
-// 5. RIDER DISPATCH ALGORITHM & LOGISTICS
+// 5. RIDER DISPATCH ALGORITHM 
 // ==========================================
 app.get('/api/rider/orders/available', async (req, res) => {
   try {
@@ -229,7 +239,6 @@ app.get('/api/rider/orders/available', async (req, res) => {
       availableOrders = availableOrders.filter(order => {
         const restLat = parseFloat(order.rest_lat) || 17.4400; 
         const restLng = parseFloat(order.rest_lng) || 78.3800;
-
         const R = 6371; 
         const dLat = (restLat - riderLat) * Math.PI / 180;
         const dLng = (restLng - riderLng) * Math.PI / 180;
@@ -237,7 +246,7 @@ app.get('/api/rider/orders/available', async (req, res) => {
         const distance = R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)));
 
         order.pickup_distance_km = distance.toFixed(1); 
-        return distance <= 50.0; // 50km for testing
+        return distance <= 50.0;
       });
     }
 
@@ -278,8 +287,6 @@ const PORT = process.env.PORT || 5000;
 // ==========================================
 // 6. ADMIN "GOD MODE" ENDPOINTS
 // ==========================================
-
-// Get Platform Analytics
 app.get('/api/admin/stats', async (req, res) => {
   try {
     const revQuery = await pool.query("SELECT SUM(total_amount) as revenue, COUNT(order_id) as total_orders FROM Orders WHERE status = 'DELIVERED'");
@@ -290,12 +297,9 @@ app.get('/api/admin/stats', async (req, res) => {
       totalOrders: revQuery.rows[0].total_orders || 0,
       activeRestaurants: activeRestQuery.rows[0].count || 0
     });
-  } catch (error) { 
-    res.status(500).json({ error: "Failed to fetch admin stats." }); 
-  }
+  } catch (error) { res.status(500).json({ error: "Failed to fetch admin stats." }); }
 });
 
-// Get Every Live Order on the Platform
 app.get('/api/admin/all-orders', async (req, res) => {
   try {
     const query = `
@@ -306,9 +310,7 @@ app.get('/api/admin/all-orders', async (req, res) => {
     `;
     const result = await pool.query(query);
     res.status(200).json(result.rows);
-  } catch (error) { 
-    res.status(500).json({ error: "Failed to fetch platform orders." }); 
-  }
+  } catch (error) { res.status(500).json({ error: "Failed to fetch platform orders." }); }
 });
 
 app.listen(PORT, () => { console.log(`🚀 Bitee Backend running on port ${PORT}`); });
