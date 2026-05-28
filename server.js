@@ -196,7 +196,11 @@ app.post('/api/orders', async (req, res) => {
     const newOrder = await pool.query(insertQuery, [customerName, totalAmount, paymentMethod, itemsJson, restaurantId || '1', mockDeliveryDistance, riderPayout, restOtp, custOtp]);
 
     res.status(201).json({ message: "Order saved!", order: newOrder.rows[0] });
-  } catch (error) { res.status(500).json({ error: "Server error while saving order." }); }
+  } catch (error) { 
+    // 🚀 UPGRADED: Log the exact error and send it to the phone!
+    console.error("🔥 ORDER INSERT ERROR:", error.message);
+    res.status(500).json({ error: `Supabase Error: ${error.message}` }); 
+  }
 });
 
 app.get('/api/orders', async (req, res) => {
@@ -311,6 +315,27 @@ app.get('/api/admin/all-orders', async (req, res) => {
     const result = await pool.query(query);
     res.status(200).json(result.rows);
   } catch (error) { res.status(500).json({ error: "Failed to fetch platform orders." }); }
+});
+
+// Approve a new restaurant
+app.put('/api/admin/restaurants/:id/approve', async (req, res) => {
+  try {
+    const updateQuery = `
+      UPDATE Restaurants 
+      SET is_approved = TRUE 
+      WHERE restaurant_id = $1 
+      RETURNING restaurant_name;
+    `;
+    const result = await pool.query(updateQuery, [req.params.id]);
+    
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: "Restaurant not found." });
+    }
+    
+    res.status(200).json({ message: `${result.rows[0].restaurant_name} has been approved!` });
+  } catch (error) { 
+    res.status(500).json({ error: "Failed to approve restaurant." }); 
+  }
 });
 
 app.listen(PORT, () => { console.log(`🚀 Bitee Backend running on port ${PORT}`); });
