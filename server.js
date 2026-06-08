@@ -194,7 +194,7 @@ app.post('/api/orders/verify', async (req, res) => {
     const custOtp = Math.floor(1000 + Math.random() * 9000).toString();
     
     // Using the flat ₹12 fee requested
-    const riderPayout = 12.00;
+    const riderPayout = taxBreakdown.deliveryFee; // NEW DYNAMIC WAY
 
     // 🚀 NEW: We save the payment_id (Transaction ID) so we can release it later!
     // Note: If you haven't added 'payment_id' to your Orders table in SQL, do: 
