@@ -168,10 +168,10 @@ app.put('/api/menu/:itemId/toggle', async (req, res) => {
 // 🚀 PHASE 4: EDIT ITEM PRICE & DETAILS
 app.put('/api/menu/:itemId', async (req, res) => {
   try {
-    const { name, price, description, isVeg } = req.body;
+    const { name, price, description, isVeg, imageUrl } = req.body;
     await pool.query(
-      'UPDATE MenuItems SET name = $1, price = $2, description = $3, is_veg = $4 WHERE item_id = $5',
-      [name, price, description, isVeg, req.params.itemId]
+      'UPDATE MenuItems SET name = $1, price = $2, description = $3, is_veg = $4, image_url = COALESCE($5, image_url) WHERE item_id = $6',
+      [name, price, description, isVeg, imageUrl, req.params.itemId]
     );
     res.status(200).json({ message: "Item updated successfully!" });
   } catch (error) { res.status(500).json({ error: "Failed to update item." }); }
@@ -276,6 +276,19 @@ app.post('/api/restaurant/:id/upload-doc', upload.single('document'), async (req
   } catch (error) {
     console.error("Upload Error:", error);
     res.status(500).json({ error: "Failed to process document." });
+  }
+});
+
+// ==========================================
+// 🚀 PHASE 4: UNIVERSAL IMAGE UPLOAD API (For Menus & Photos)
+// ==========================================
+app.post('/api/upload-image', upload.single('image'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: "No image provided." });
+    // req.file.path contains the secure Cloudinary URL
+    res.status(200).json({ url: req.file.path });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to upload image to cloud." });
   }
 });
 
