@@ -395,4 +395,19 @@ app.put('/api/admin/restaurants/:id/approve', async (req, res) => {
   }
 });
 
+// ==========================================
+// 🚀 AUTO-PATCH LIVE DATABASE (Added to fix Render deployment)
+// ==========================================
+pool.query(`
+  ALTER TABLE Orders ADD COLUMN IF NOT EXISTS payment_id VARCHAR(255);
+  ALTER TABLE Orders ADD COLUMN IF NOT EXISTS delivery_address VARCHAR(500);
+  ALTER TABLE Orders ADD COLUMN IF NOT EXISTS delivery_distance_km NUMERIC(10, 2);
+  ALTER TABLE Orders ADD COLUMN IF NOT EXISTS tax_breakdown JSONB;
+  ALTER TABLE Orders ADD COLUMN IF NOT EXISTS rider_payout NUMERIC(10, 2);
+  ALTER TABLE Orders ADD COLUMN IF NOT EXISTS rest_otp VARCHAR(10);
+  ALTER TABLE Orders ADD COLUMN IF NOT EXISTS cust_otp VARCHAR(10);
+  ALTER TABLE Orders ADD COLUMN IF NOT EXISTS items_json JSONB;
+`).then(() => console.log("✅ Live Database patched successfully!"))
+  .catch(err => console.log("Database patch note:", err.message));
+
 app.listen(PORT, () => { console.log(`🚀 Bitee Backend running on port ${PORT}`); });
