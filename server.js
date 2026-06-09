@@ -144,10 +144,45 @@ app.get('/api/menu/:restaurantId', async (req, res) => {
   try {
     const menuQuery = await pool.query('SELECT * FROM MenuItems WHERE restaurant_id = $1 ORDER BY created_at DESC', [req.params.restaurantId]);
     const formattedMenu = menuQuery.rows.map(item => ({
-      id: item.item_id, name: item.name, price: `₹${item.price}`, desc: item.description, veg: item.is_veg, image: item.image_url
+      id: item.item_id, 
+      name: item.name, 
+      price: `₹${item.price}`, 
+      desc: item.description, 
+      veg: item.is_veg, 
+      image: item.image_url,
+      is_available: item.is_available // 🚀 Added for Phase 4
     }));
     res.json(formattedMenu);
   } catch (error) { res.status(500).json({ error: "Error fetching menu." }); }
+});
+
+// 🚀 PHASE 4: UPDATE ITEM AVAILABILITY (IN STOCK / OUT OF STOCK)
+app.put('/api/menu/:itemId/toggle', async (req, res) => {
+  try {
+    const { isAvailable } = req.body;
+    await pool.query('UPDATE MenuItems SET is_available = $1 WHERE item_id = $2', [isAvailable, req.params.itemId]);
+    res.status(200).json({ message: "Item availability updated!" });
+  } catch (error) { res.status(500).json({ error: "Failed to toggle item." }); }
+});
+
+// 🚀 PHASE 4: EDIT ITEM PRICE & DETAILS
+app.put('/api/menu/:itemId', async (req, res) => {
+  try {
+    const { name, price, description, isVeg } = req.body;
+    await pool.query(
+      'UPDATE MenuItems SET name = $1, price = $2, description = $3, is_veg = $4 WHERE item_id = $5',
+      [name, price, description, isVeg, req.params.itemId]
+    );
+    res.status(200).json({ message: "Item updated successfully!" });
+  } catch (error) { res.status(500).json({ error: "Failed to update item." }); }
+});
+
+// 🚀 PHASE 4: DELETE ITEM
+app.delete('/api/menu/:itemId', async (req, res) => {
+  try {
+    await pool.query('DELETE FROM MenuItems WHERE item_id = $1', [req.params.itemId]);
+    res.status(200).json({ message: "Item deleted." });
+  } catch (error) { res.status(500).json({ error: "Failed to delete item." }); }
 });
 
 // ==========================================
@@ -469,7 +504,7 @@ app.put('/api/admin/restaurants/:id/approve', async (req, res) => {
 });
 
 // ==========================================
-// 🚀 AUTO-PATCH LIVE DATABASE (Upgraded for Phase 2 & 3)
+// 🚀 AUTO-PATCH LIVE DATABASE (Upgraded for Phase 2, 3, & 4)
 // ==========================================
 pool.query(`
   ALTER TABLE Orders ADD COLUMN IF NOT EXISTS payment_id VARCHAR(255);
@@ -498,6 +533,9 @@ pool.query(`
 
   -- 🚀 PHASE 3: COMPLIANCE DOCUMENTS
   ALTER TABLE Restaurants ADD COLUMN IF NOT EXISTS document_url VARCHAR(500);
+
+  -- 🚀 PHASE 4: MENU AVAILABILITY
+  ALTER TABLE MenuItems ADD COLUMN IF NOT EXISTS is_available BOOLEAN DEFAULT TRUE;
 
 `).then(() => console.log("✅ Live Database patched successfully!"))
   .catch(err => console.log("Database patch note:", err.message));
