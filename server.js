@@ -182,34 +182,38 @@ app.put('/api/orders/:id/reject', async (req, res) => {
 });
 
 // ==========================================
-// 4. CUSTOMER CHECKOUT (🚀 UPGRADED FOR ESCROW HOLD)
+// 4. CUSTOMER CHECKOUT (🚀 UPGRADED DYNAMIC LOGIC)
 // ==========================================
 app.post('/api/orders/verify', async (req, res) => {
   try {
-    const { customerName, totalAmount, paymentMethod, transactionId, items, restaurantId, deliveryAddress, taxBreakdown } = req.body;
+    // 🚀 NEW: Extracted deliveryAddress, deliveryDistanceKm, and taxBreakdown from the frontend request
+    const { customerName, totalAmount, paymentMethod, transactionId, items, restaurantId, deliveryAddress, deliveryDistanceKm, taxBreakdown } = req.body;
+    
+    // Safely convert JSON objects into strings so PostgreSQL can store them properly
     const itemsJson = JSON.stringify(items);
+    const taxBreakdownJson = JSON.stringify(taxBreakdown); 
     
     // Auto-generate secure OTPs for the handoffs
     const restOtp = Math.floor(1000 + Math.random() * 9000).toString();
     const custOtp = Math.floor(1000 + Math.random() * 9000).toString();
     
-    // Using the flat ₹12 fee requested
-    const riderPayout = taxBreakdown.deliveryFee; // NEW DYNAMIC WAY
+    // Read the dynamic delivery fee out of the tax breakdown to calculate exact Rider Payout
+    const riderPayout = taxBreakdown ? taxBreakdown.deliveryFee : 0.00;
 
-    // 🚀 NEW: We save the payment_id (Transaction ID) so we can release it later!
-    // Note: If you haven't added 'payment_id' to your Orders table in SQL, do: 
-    // ALTER TABLE Orders ADD COLUMN payment_id VARCHAR(255);
+    // 🚀 NEW: Insert statement upgraded to include the 3 new fields
     const insertQuery = `
       INSERT INTO Orders (
         customer_name, total_amount, payment_method, payment_id, items_json, 
-        restaurant_id, rider_payout, rest_otp, cust_otp
+        restaurant_id, rider_payout, rest_otp, cust_otp,
+        delivery_address, delivery_distance_km, tax_breakdown
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING order_id, status;
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING order_id, status;
     `;
     
     const newOrder = await pool.query(insertQuery, [
       customerName, totalAmount, paymentMethod, transactionId || 'COD', 
-      itemsJson, restaurantId || '1', riderPayout, restOtp, custOtp
+      itemsJson, restaurantId || '1', riderPayout, restOtp, custOtp,
+      deliveryAddress || 'Not Provided', deliveryDistanceKm || 0.0, taxBreakdownJson || '{}'
     ]);
 
     res.status(201).json({ message: "Order placed. Funds securely held in Escrow.", order: newOrder.rows[0] });
@@ -306,7 +310,7 @@ app.put('/api/rider/orders/:id/complete', async (req, res) => {
         await razorpay.payments.transfer(order.payment_id, {
           transfers: [
             { account: restaurantAccountId, amount: Math.round(foodTotal * 100), currency: "INR" },
-            { account: deliveryPartnerId, amount: Math.round(order.rider_payout * 100), currency: "INR" } // Rider gets exactly ₹12
+            { account: deliveryPartnerId, amount: Math.round(order.rider_payout * 100), currency: "INR" } // Rider gets exact dynamic fee
           ]
         });
         console.log("💰 Funds Released Successfully via Razorpay!");
