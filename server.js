@@ -16,6 +16,23 @@ const razorpay = new Razorpay({
   key_secret: process.env.RAZORPAY_KEY_SECRET || 'YOUR_SECRET_HERE',
 });
 
+// 🚀 INITIALIZE CLOUDINARY (For Document Uploads)
+const cloudinary = require('cloudinary').v2;
+const { CloudinaryStorage } = require('multer-storage-cloudinary');
+const multer = require('multer');
+
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME || 'YOUR_CLOUD_NAME',
+  api_key: process.env.CLOUDINARY_API_KEY || 'YOUR_API_KEY',
+  api_secret: process.env.CLOUDINARY_API_SECRET || 'YOUR_API_SECRET'
+});
+
+const storage = new CloudinaryStorage({
+  cloudinary: cloudinary,
+  params: { folder: 'bitee_documents', allowed_formats: ['jpg', 'png', 'pdf'] },
+});
+const upload = multer({ storage: storage });
+
 // ==========================================
 // 1. AUTHENTICATION (ALL 3 USERS)
 // ==========================================
@@ -182,7 +199,7 @@ app.put('/api/orders/:id/reject', async (req, res) => {
 });
 
 // ==========================================
-// 🚀 3.5 PHASE 2: DIGITAL WALLET API (NEW)
+// 🚀 3.5 PHASE 2: DIGITAL WALLET API 
 // ==========================================
 app.get('/api/restaurant/:id/wallet', async (req, res) => {
   try {
@@ -201,6 +218,29 @@ app.get('/api/restaurant/:id/wallet', async (req, res) => {
     });
   } catch (error) { 
     res.status(500).json({ error: "Failed to fetch wallet data." }); 
+  }
+});
+
+// ==========================================
+// 🚀 3.6 PHASE 3: SECURE DOCUMENT UPLOAD API
+// ==========================================
+app.post('/api/restaurant/:id/upload-doc', upload.single('document'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: "No file uploaded." });
+    
+    const fileUrl = req.file.path; // This is the secure Cloudinary URL
+    const docType = req.body.docType || 'FSSAI'; 
+
+    // Save the secure link into the restaurant's profile
+    await pool.query(
+      "UPDATE Restaurants SET document_url = $1 WHERE restaurant_id = $2", 
+      [fileUrl, req.params.id]
+    );
+
+    res.status(200).json({ message: `${docType} uploaded successfully!`, url: fileUrl });
+  } catch (error) {
+    console.error("Upload Error:", error);
+    res.status(500).json({ error: "Failed to process document." });
   }
 });
 
@@ -429,7 +469,7 @@ app.put('/api/admin/restaurants/:id/approve', async (req, res) => {
 });
 
 // ==========================================
-// 🚀 AUTO-PATCH LIVE DATABASE (Upgraded for Phase 2 Wallets)
+// 🚀 AUTO-PATCH LIVE DATABASE (Upgraded for Phase 2 & 3)
 // ==========================================
 pool.query(`
   ALTER TABLE Orders ADD COLUMN IF NOT EXISTS payment_id VARCHAR(255);
@@ -455,6 +495,10 @@ pool.query(`
     type VARCHAR(50), 
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
   );
+
+  -- 🚀 PHASE 3: COMPLIANCE DOCUMENTS
+  ALTER TABLE Restaurants ADD COLUMN IF NOT EXISTS document_url VARCHAR(500);
+
 `).then(() => console.log("✅ Live Database patched successfully!"))
   .catch(err => console.log("Database patch note:", err.message));
 
