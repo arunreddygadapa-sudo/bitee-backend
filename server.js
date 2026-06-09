@@ -182,6 +182,29 @@ app.put('/api/orders/:id/reject', async (req, res) => {
 });
 
 // ==========================================
+// 🚀 3.5 PHASE 2: DIGITAL WALLET API (NEW)
+// ==========================================
+app.get('/api/restaurant/:id/wallet', async (req, res) => {
+  try {
+    const restId = req.params.id;
+    
+    // Ensure the wallet exists so the query doesn't crash
+    await pool.query("INSERT INTO Wallets (restaurant_id, balance) VALUES ($1, 0) ON CONFLICT DO NOTHING", [restId]);
+    
+    // Fetch total balance and last 50 transactions
+    const balanceQuery = await pool.query("SELECT balance FROM Wallets WHERE restaurant_id = $1", [restId]);
+    const historyQuery = await pool.query("SELECT * FROM WalletTransactions WHERE restaurant_id = $1 ORDER BY created_at DESC LIMIT 50", [restId]);
+    
+    res.status(200).json({
+      balance: balanceQuery.rows[0]?.balance || 0.00,
+      transactions: historyQuery.rows
+    });
+  } catch (error) { 
+    res.status(500).json({ error: "Failed to fetch wallet data." }); 
+  }
+});
+
+// ==========================================
 // 4. CUSTOMER CHECKOUT (🚀 UPGRADED DYNAMIC LOGIC)
 // ==========================================
 app.post('/api/orders/verify', async (req, res) => {
@@ -193,8 +216,8 @@ app.post('/api/orders/verify', async (req, res) => {
     const itemsJson = JSON.stringify(items);
     const taxBreakdownJson = JSON.stringify(taxBreakdown); 
     
-    // Auto-generate secure OTPs for the handoffs
-    const restOtp = Math.floor(1000 + Math.random() * 9000).toString();
+    // 🚀 PHASE 2: Auto-generate secure 5-Digit OTP for the handoffs
+    const restOtp = Math.floor(10000 + Math.random() * 90000).toString();
     const custOtp = Math.floor(1000 + Math.random() * 9000).toString();
     
     // Read the dynamic delivery fee out of the tax breakdown to calculate exact Rider Payout
@@ -285,7 +308,7 @@ app.put('/api/rider/orders/:id/accept', async (req, res) => {
   } catch (error) { res.status(500).json({ error: "Failed to accept order." }); }
 });
 
-// 🚀 UPGRADED: COMPLETE DELIVERY & RELEASE ESCROW FUNDS
+// 🚀 UPGRADED: COMPLETE DELIVERY & AUTO-CREDIT WALLETS
 app.put('/api/rider/orders/:id/complete', async (req, res) => {
   try {
     const orderId = req.params.id;
@@ -322,7 +345,17 @@ app.put('/api/rider/orders/:id/complete', async (req, res) => {
 
     // 3. Mark as delivered in the Database
     await pool.query("UPDATE Orders SET status = 'DELIVERED' WHERE order_id = $1", [orderId]);
-    res.status(200).json({ message: "Delivery completed! Funds released." });
+
+    // 4. 🚀 PHASE 2: CREDIT THE RESTAURANT DIGITAL WALLET
+    // Math: Total Paid - Rider Delivery Fee - Platform Fee - 5% Tax
+    const foodTotal = parseFloat((order.total_amount - order.rider_payout - 5 - (order.total_amount * 0.05)).toFixed(2)); 
+
+    // Ensure wallet exists, add funds, and write the receipt log
+    await pool.query("INSERT INTO Wallets (restaurant_id, balance) VALUES ($1, 0) ON CONFLICT DO NOTHING", [order.restaurant_id]);
+    await pool.query("UPDATE Wallets SET balance = balance + $1 WHERE restaurant_id = $2", [foodTotal, order.restaurant_id]);
+    await pool.query("INSERT INTO WalletTransactions (restaurant_id, order_id, amount, type) VALUES ($1, $2, $3, 'CREDIT')", [order.restaurant_id, orderId, foodTotal]);
+
+    res.status(200).json({ message: "Delivery completed! Funds released and Wallet Credited." });
 
   } catch (error) { 
     res.status(500).json({ error: "Failed to complete delivery and release funds." }); 
@@ -396,7 +429,7 @@ app.put('/api/admin/restaurants/:id/approve', async (req, res) => {
 });
 
 // ==========================================
-// 🚀 AUTO-PATCH LIVE DATABASE (Added to fix Render deployment)
+// 🚀 AUTO-PATCH LIVE DATABASE (Upgraded for Phase 2 Wallets)
 // ==========================================
 pool.query(`
   ALTER TABLE Orders ADD COLUMN IF NOT EXISTS payment_id VARCHAR(255);
@@ -407,6 +440,21 @@ pool.query(`
   ALTER TABLE Orders ADD COLUMN IF NOT EXISTS rest_otp VARCHAR(10);
   ALTER TABLE Orders ADD COLUMN IF NOT EXISTS cust_otp VARCHAR(10);
   ALTER TABLE Orders ADD COLUMN IF NOT EXISTS items_json JSONB;
+
+  -- 🚀 PHASE 2: DIGITAL WALLET TABLES
+  CREATE TABLE IF NOT EXISTS Wallets (
+    restaurant_id VARCHAR(255) PRIMARY KEY,
+    balance NUMERIC(10, 2) DEFAULT 0.00
+  );
+  
+  CREATE TABLE IF NOT EXISTS WalletTransactions (
+    transaction_id SERIAL PRIMARY KEY,
+    restaurant_id VARCHAR(255),
+    order_id VARCHAR(255),
+    amount NUMERIC(10, 2),
+    type VARCHAR(50), 
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  );
 `).then(() => console.log("✅ Live Database patched successfully!"))
   .catch(err => console.log("Database patch note:", err.message));
 
