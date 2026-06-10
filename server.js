@@ -34,6 +34,47 @@ const storage = new CloudinaryStorage({
 const upload = multer({ storage: storage });
 
 // ==========================================
+// 🚀 PHASE 7: PUSH NOTIFICATION ENGINE
+// ==========================================
+const sendPushNotification = async (expoPushToken, title, body, data = {}) => {
+  if (!expoPushToken) return;
+  const message = {
+    to: expoPushToken,
+    sound: 'default',
+    title: title,
+    body: body,
+    data: data,
+  };
+
+  try {
+    await fetch('https://exp.host/--/api/v2/push/send', {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Accept-encoding': 'gzip, deflate',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(message),
+    });
+  } catch (error) {
+    console.error("Push Notification Error:", error);
+  }
+};
+
+app.put('/api/notifications/save-token', async (req, res) => {
+  try {
+    const { userId, userType, token } = req.body;
+    let table = userType === 'RESTAURANT' ? 'Restaurants' : userType === 'RIDER' ? 'Riders' : 'Users';
+    let idCol = userType === 'RESTAURANT' ? 'restaurant_id' : userType === 'RIDER' ? 'rider_id' : 'user_id';
+    
+    await pool.query(`UPDATE ${table} SET push_token = $1 WHERE ${idCol} = $2`, [token, userId]);
+    res.status(200).json({ success: true, message: "Push token securely registered." });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to save push token." });
+  }
+});
+
+// ==========================================
 // 1. AUTHENTICATION (ALL 3 USERS)
 // ==========================================
 app.post('/api/register', async (req, res) => {
@@ -94,7 +135,6 @@ app.post('/api/partner/register', async (req, res) => {
     
     res.status(201).json({ message: "Application submitted successfully!", restaurant: newRestaurant.rows[0] });
   } catch (error) { 
-    console.error("🔥 DB INSERT ERROR:", error.message);
     res.status(500).json({ error: `Database error: ${error.message}` }); 
   }
 });
@@ -161,13 +201,7 @@ app.get('/api/menu/:restaurantId', async (req, res) => {
   try {
     const menuQuery = await pool.query('SELECT * FROM MenuItems WHERE restaurant_id = $1 ORDER BY created_at DESC', [req.params.restaurantId]);
     const formattedMenu = menuQuery.rows.map(item => ({
-      id: item.item_id, 
-      name: item.name, 
-      price: `₹${item.price}`, 
-      desc: item.description, 
-      veg: item.is_veg, 
-      image: item.image_url, 
-      is_available: item.is_available 
+      id: item.item_id, name: item.name, price: `₹${item.price}`, desc: item.description, veg: item.is_veg, image: item.image_url, is_available: item.is_available 
     }));
     res.json(formattedMenu);
   } catch (error) { 
@@ -190,12 +224,7 @@ app.put('/api/menu/:itemId', async (req, res) => {
     const { name, price, description, isVeg, imageUrl, isAvailable } = req.body;
     await pool.query(
       `UPDATE MenuItems 
-       SET name = COALESCE($1, name), 
-           price = COALESCE($2, price), 
-           description = COALESCE($3, description), 
-           is_veg = COALESCE($4, is_veg), 
-           image_url = COALESCE($5, image_url), 
-           is_available = COALESCE($6, is_available) 
+       SET name = COALESCE($1, name), price = COALESCE($2, price), description = COALESCE($3, description), is_veg = COALESCE($4, is_veg), image_url = COALESCE($5, image_url), is_available = COALESCE($6, is_available) 
        WHERE item_id = $7`,
       [name, price, description, isVeg, imageUrl, isAvailable, req.params.itemId]
     );
@@ -255,9 +284,23 @@ app.get('/api/restaurant/orders/:restaurantId/history', async (req, res) => {
   }
 });
 
+// 🚀 UPGRADED: Trigger Customer Push Notification when Restaurant changes status
 app.put('/api/orders/:id/status', async (req, res) => {
   try {
     await pool.query('UPDATE Orders SET status = $1 WHERE order_id = $2', [req.body.status, req.params.id]);
+    
+    // Find the customer's push token to notify them
+    const orderData = await pool.query("SELECT customer_name FROM Orders WHERE order_id = $1", [req.params.id]);
+    const userQuery = await pool.query("SELECT push_token FROM Users WHERE full_name = $1", [orderData.rows[0]?.customer_name]);
+    
+    if (userQuery.rows[0]?.push_token) {
+      await sendPushNotification(
+        userQuery.rows[0].push_token, 
+        "Order Update 🛵", 
+        `Your Bitee order is now: ${req.body.status}`
+      );
+    }
+
     res.status(200).json({ message: `Order marked as ${req.body.status}!` });
   } catch (error) { 
     res.status(500).json({ error: "Error updating status." }); 
@@ -284,10 +327,7 @@ app.get('/api/restaurant/:id/wallet', async (req, res) => {
     const balanceQuery = await pool.query("SELECT balance FROM Wallets WHERE restaurant_id = $1", [restId]);
     const historyQuery = await pool.query("SELECT * FROM WalletTransactions WHERE restaurant_id = $1 ORDER BY created_at DESC LIMIT 50", [restId]);
     
-    res.status(200).json({ 
-      balance: balanceQuery.rows[0]?.balance || 0.00, 
-      transactions: historyQuery.rows 
-    });
+    res.status(200).json({ balance: balanceQuery.rows[0]?.balance || 0.00, transactions: historyQuery.rows });
   } catch (error) { 
     res.status(500).json({ error: "Failed to fetch wallet data." }); 
   }
@@ -339,6 +379,16 @@ app.post('/api/orders/verify', async (req, res) => {
       deliveryAddress || 'Not Provided', deliveryDistanceKm || 0.0, taxBreakdownJson || '{}'
     ]);
     
+    // 🚀 UPGRADED: Trigger Restaurant Push Notification for new order
+    const restQuery = await pool.query("SELECT push_token FROM Restaurants WHERE restaurant_id = $1", [restaurantId || '1']);
+    if (restQuery.rows[0]?.push_token) {
+      await sendPushNotification(
+        restQuery.rows[0].push_token, 
+        "🚨 NEW KOT RECEIVED!", 
+        `Order #${newOrder.rows[0].order_id} - ₹${totalAmount} has been paid.`
+      );
+    }
+
     res.status(201).json({ message: "Order placed.", order: newOrder.rows[0] });
   } catch (error) { 
     res.status(500).json({ error: `Server Error` }); 
@@ -355,7 +405,7 @@ app.get('/api/orders', async (req, res) => {
 });
 
 // ==========================================
-// 🚀 4.5 PRIVACY & SUPPORT ENGINE (PHASE 6)
+// 4.5 PRIVACY & SUPPORT ENGINE
 // ==========================================
 app.get('/api/orders/:id/track', async (req, res) => {
   try {
@@ -372,8 +422,6 @@ app.get('/api/orders/:id/track', async (req, res) => {
     if (result.rows.length === 0) return res.status(404).json({ error: "Order not found." });
 
     const order = result.rows[0];
-
-    // Privacy Masking (Show only last 4 digits to customer)
     const restPhone = order.restaurant_phone || "0000000000";
     const maskedRestPhone = "******" + restPhone.slice(-4);
 
@@ -390,11 +438,9 @@ app.get('/api/orders/:id/track', async (req, res) => {
 app.put('/api/orders/:id/customer-cancel', async (req, res) => {
   try {
     const check = await pool.query("SELECT status FROM Orders WHERE order_id = $1", [req.params.id]);
-    
     if (check.rows[0]?.status !== 'PENDING') {
       return res.status(400).json({ error: "Order is already being prepared. Request cancellation via Support." });
     }
-    
     await pool.query("UPDATE Orders SET status = 'CANCELLED' WHERE order_id = $1", [req.params.id]);
     res.status(200).json({ message: "Order cancelled successfully." });
   } catch (error) { 
@@ -415,9 +461,6 @@ app.post('/api/support/request', async (req, res) => {
   }
 });
 
-// ==========================================
-// 🚀 4.6 RESTAURANT BILLING / KOT ENDPOINT
-// ==========================================
 app.get('/api/orders/:id/bill', async (req, res) => {
   try {
     const query = `
@@ -431,8 +474,6 @@ app.get('/api/orders/:id/bill', async (req, res) => {
     if (result.rows.length === 0) return res.status(404).json({ error: "Order not found." });
     
     const order = result.rows[0];
-    
-    // Calculates EXACT Bitee platform commission and net payouts
     const foodTotal = parseFloat((order.total_amount - order.rider_payout - 5 - (order.total_amount * 0.05)).toFixed(2));
     const platformFee = 5.00;
     const taxAmount = parseFloat((order.total_amount * 0.05).toFixed(2));
@@ -440,23 +481,10 @@ app.get('/api/orders/:id/bill', async (req, res) => {
     res.status(200).json({
       bill_no: `BTEE-${String(order.order_id).padStart(5, '0')}`,
       date: order.created_at,
-      restaurant: {
-        name: order.restaurant_name,
-        address: order.restaurant_address,
-        phone: order.restaurant_phone
-      },
-      customer: {
-        name: order.customer_name,
-        address: order.delivery_address
-      },
+      restaurant: { name: order.restaurant_name, address: order.restaurant_address, phone: order.restaurant_phone },
+      customer: { name: order.customer_name, address: order.delivery_address },
       items: typeof order.items_json === 'string' ? JSON.parse(order.items_json) : order.items_json,
-      financials: {
-        gross_total: order.total_amount,
-        rider_fee: order.rider_payout,
-        platform_fee: platformFee,
-        taxes: taxAmount,
-        restaurant_net_payout: foodTotal
-      },
+      financials: { gross_total: order.total_amount, rider_fee: order.rider_payout, platform_fee: platformFee, taxes: taxAmount, restaurant_net_payout: foodTotal },
       payment_method: order.payment_method
     });
   } catch (error) { 
@@ -498,7 +526,6 @@ app.get('/api/rider/orders/available', async (req, res) => {
         return distance <= 50.0;
       });
     }
-
     res.status(200).json(availableOrders.slice(0, 5));
   } catch (error) { 
     res.status(500).json({ error: "Failed to fetch orders." }); 
@@ -545,6 +572,12 @@ app.put('/api/rider/orders/:id/complete', async (req, res) => {
     await pool.query("INSERT INTO Wallets (restaurant_id, balance) VALUES ($1, 0) ON CONFLICT DO NOTHING", [order.restaurant_id]);
     await pool.query("UPDATE Wallets SET balance = balance + $1 WHERE restaurant_id = $2", [foodTotal, order.restaurant_id]);
     await pool.query("INSERT INTO WalletTransactions (restaurant_id, order_id, amount, type) VALUES ($1, $2, $3, 'CREDIT')", [order.restaurant_id, orderId, foodTotal]);
+
+    // 🚀 UPGRADED: Notify Customer of Delivery
+    const userQuery = await pool.query("SELECT push_token FROM Users WHERE full_name = $1", [order.customer_name]);
+    if (userQuery.rows[0]?.push_token) {
+      await sendPushNotification(userQuery.rows[0].push_token, "Delivered! 🎉", "Your food has arrived. Enjoy your meal!");
+    }
 
     res.status(200).json({ message: "Delivery completed!" });
   } catch (error) { 
@@ -594,32 +627,6 @@ app.get('/api/admin/all-orders', async (req, res) => {
   } catch (error) { 
     res.status(500).json({ error: "Failed to fetch platform orders." }); 
   }
-});
-
-// Fetch restaurants waiting for your approval
-app.get('/api/admin/pending-restaurants', async (req, res) => {
-  try {
-    const query = `SELECT restaurant_id, restaurant_name, owner_name, restaurant_phone, document_url, license_copy_url FROM Restaurants WHERE is_approved = FALSE ORDER BY created_at DESC`;
-    const result = await pool.query(query);
-    res.status(200).json(result.rows);
-  } catch (error) { res.status(500).json({ error: "Failed to fetch pending restaurants." }); }
-});
-
-// Fetch Customer Support Tickets
-app.get('/api/admin/support-tickets', async (req, res) => {
-  try {
-    const query = `SELECT * FROM SupportRequests WHERE status = 'PENDING' ORDER BY created_at DESC`;
-    const result = await pool.query(query);
-    res.status(200).json(result.rows);
-  } catch (error) { res.status(500).json({ error: "Failed to fetch tickets." }); }
-});
-
-// Resolve a Ticket
-app.put('/api/admin/support-tickets/:id/resolve', async (req, res) => {
-  try {
-    await pool.query("UPDATE SupportRequests SET status = 'RESOLVED' WHERE ticket_id = $1", [req.params.id]);
-    res.status(200).json({ message: "Ticket marked as resolved." });
-  } catch (error) { res.status(500).json({ error: "Failed to resolve ticket." }); }
 });
 
 app.put('/api/admin/restaurants/:id/approve', async (req, res) => {
@@ -681,6 +688,11 @@ pool.query(`
     status VARCHAR(50) DEFAULT 'PENDING',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
   );
+
+  -- 🚀 PHASE 7: PUSH NOTIFICATION TOKENS
+  ALTER TABLE Users ADD COLUMN IF NOT EXISTS push_token VARCHAR(255);
+  ALTER TABLE Restaurants ADD COLUMN IF NOT EXISTS push_token VARCHAR(255);
+  ALTER TABLE Riders ADD COLUMN IF NOT EXISTS push_token VARCHAR(255);
 
 `).then(() => console.log("✅ Live Database patched successfully!"))
   .catch(err => console.log("Database patch note:", err.message));
